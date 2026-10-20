@@ -10,7 +10,7 @@ const { openDb, SESSION_MS } = require('./lib/db');
 const { createImageResolver } = require('./lib/images');
 const rules = require('./lib/rules');
 const {
-  SECURITY_HEADERS, HttpError, checkOrigin, checkContentType, readBody,
+  SECURITY_HEADERS, HttpError, checkOrigin, clientIp, checkContentType, readBody,
   createRateLimiter, readSid, hashToken, safeEqual,
 } = require('./lib/security');
 
@@ -104,6 +104,7 @@ function createApp({ db, env = process.env, fetch: fetchOpt, imageDelayMs = 500,
   const store = db && typeof db === 'object' ? db : openDb(db || ':memory:');
   const inviteCode = String(env.TRIP_CODE || '').trim();
   const forceSecure = env.COOKIE_SECURE === '1';
+  const trustProxy = env.TRUST_PROXY === '1';
   const fetchFn = fetchOpt === false || env.TRIP_OFFLINE === '1' ? null : (fetchOpt || globalThis.fetch);
   const limiter = createRateLimiter({ max: LOGIN_MAX_FAILURES, windowMs: LOGIN_WINDOW_MS });
   const images = createImageResolver({ store, fetch: fetchFn, delayMs: imageDelayMs, log });
@@ -262,7 +263,7 @@ function createApp({ db, env = process.env, fetch: fetchOpt, imageDelayMs = 500,
   };
 
   async function api(req, url) {
-    const ctx = { req, ip: req.socket.remoteAddress || '', body: {}, user: null };
+    const ctx = { req, ip: clientIp(req, trustProxy), body: {}, user: null };
     if (req.method === 'POST') {
       const bad = checkOrigin(req) || checkContentType(req);
       if (bad) { req.resume(); return fail(bad.status, bad.error); }

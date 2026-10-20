@@ -17,6 +17,13 @@ test('checkOrigin', () => {
   }
 });
 
+test('clientIp', () => {
+  const req = { headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.2' }, socket: { remoteAddress: '10.0.0.1' } };
+  assert.equal(s.clientIp(req), '10.0.0.1', 'ignores X-Forwarded-For unless trusted');
+  assert.equal(s.clientIp(req, true), '203.0.113.7', 'first forwarded entry behind a proxy');
+  assert.equal(s.clientIp({ headers: {}, socket: { remoteAddress: '10.0.0.1' } }, true), '10.0.0.1', 'falls back to the socket');
+});
+
 test('checkContentType', () => {
   assert.equal(s.checkContentType({ headers: { 'content-type': 'application/json' } }), null);
   assert.equal(s.checkContentType({ headers: { 'content-type': 'Application/JSON; charset=utf-8' } }), null);

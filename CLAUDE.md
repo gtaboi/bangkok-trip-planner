@@ -8,7 +8,8 @@ A web app for a group trip to Bangkok. Up to 10 travellers register, vote on iti
 
 ## Commands
 
-- **Run:** `npm start`. It serves http://localhost:3000 on `127.0.0.1`. The environment variables `PORT`, `HOST`, `TRIP_DB`, `TRIP_CODE`, `COOKIE_SECURE` and `TRIP_OFFLINE` are documented in the README. `.claude/launch.json` defines the preview server `trip`, which uses port 3000 and the **live** `trip.db`.
+- **Run:** `npm start`. It serves http://localhost:3000 on `127.0.0.1`. The environment variables `PORT`, `HOST`, `TRIP_DB`, `TRIP_CODE`, `COOKIE_SECURE`, `TRUST_PROXY` and `TRIP_OFFLINE` are documented in the README.
+- **Deploy:** Render, via the `render.yaml` Blueprint (free plan, auto-deploys from `main`). The free plan's filesystem is temporary, so the deployed `trip.db` is wiped on every restart, redeploy or idle sleep. That's expected, not a bug. Its settings are `HOST=0.0.0.0`, `TRUST_PROXY=1` and `COOKIE_SECURE=1`, with `TRIP_CODE` set in the dashboard. `.claude/launch.json` defines the preview server `trip`, which uses port 3000 and the **live** `trip.db`.
 - **Test:** `npm test`, which runs `node --test`. On Node 24, `node --test test/` fails ("Cannot find module"). To run one file, use `node --test test/rules.test.js`. To run one test, use `node --test --test-name-pattern="delete" test/api.test.js`.
 - **Lint:** `npm run lint` runs ESLint 10 with a flat config (`eslint.config.js`). `npm run check` runs lint, then the tests.
 - **Reset data:** delete `trip.db` while the server is stopped. On Windows the file is locked while the server runs. The next start recreates the database and seeds it.

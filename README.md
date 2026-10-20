@@ -20,6 +20,7 @@ Open http://localhost:3000. Each person registers with a name and password, and 
 | `PORT` | `3000` | |
 | `TRIP_DB` | `./trip.db` | Where the database file is kept. |
 | `COOKIE_SECURE` | unset | Set to `1` when the app is served over HTTPS. The flag is also added automatically behind a proxy that sends `X-Forwarded-Proto: https`. |
+| `TRUST_PROXY` | unset | Set to `1` behind a hosting proxy (Render, Railway…) so login limits apply per visitor rather than to the proxy's single address. |
 | `TRIP_OFFLINE` | unset | Set to `1` to skip looking up Wikipedia photos. |
 
 For example, to share the app on your Wi-Fi with an invite code (PowerShell):
@@ -28,7 +29,20 @@ For example, to share the app on your Wi-Fi with an invite code (PowerShell):
 $env:TRIP_CODE = "pick-a-code"; $env:HOST = "0.0.0.0"; npm start
 ```
 
-Other devices then open `http://<your-PC-IP>:3000`. Plain HTTP isn't encrypted, so only do this on a network you trust, such as your home Wi-Fi rather than a hotel or café. To use the app over the internet, deploy it to a host such as Render or Railway with a persistent disk for `trip.db`, serve it over HTTPS, and set `COOKIE_SECURE=1`.
+Other devices then open `http://<your-PC-IP>:3000`. Plain HTTP isn't encrypted, so only do this on a network you trust, such as your home Wi-Fi rather than a hotel or café.
+
+## Deploy to Render
+
+`render.yaml` is a Render Blueprint that sets up the app with HTTPS and the right settings.
+
+1. Sign in at [render.com](https://render.com) with GitHub.
+2. Choose **New → Blueprint** and pick this repo.
+3. Enter an invite code for `TRIP_CODE` when asked, and press **Apply**.
+4. Share the `https://<name>.onrender.com` link and the invite code with the group.
+
+Pushes to `main` redeploy automatically.
+
+**On the free plan, data doesn't last.** The server's files are temporary, so `trip.db` is erased whenever the service restarts, redeploys, or wakes up after about 15 minutes without visitors. Everyone then has to register and vote again. The first visit after a sleep also takes about a minute to load. To keep the data, follow the comments in `render.yaml` to switch to the Starter plan with a disk (about US$7/month).
 
 ## Features
 - **Login:** name and password (at least 8 characters), plus the invite code when `TRIP_CODE` is set.
