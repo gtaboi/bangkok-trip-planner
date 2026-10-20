@@ -1,0 +1,5 @@
+trip.db
+trip.db-*
+node_modules/
+.claude/
+.env

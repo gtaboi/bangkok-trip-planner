@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bangkok Trip Planner</title>
+<style>
+  :root {
+    --bg: #faf7f2; --card: #fff; --ink: #1f1d1a; --muted: #6b665e; --line: #e7e1d7;
+    --accent: #c2410c; --accent-soft: #fdeee4; --gold: #b7791f; --ok: #15803d; --ok-soft: #e8f5ec;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+  header { background: var(--ink); color: #fff; padding: 14px 16px; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 16px; }
+  header .wrap { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0; }
+  h1 { font-size: 19px; margin: 0; letter-spacing: .2px; }
+  h1 span { color: #fdba74; }
+  h2 { font-size: 17px; margin: 24px 0 10px; }
+  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line); background: #fff; padding: 6px 12px; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.ghost { background: transparent; color: inherit; border-color: rgba(255,255,255,.35); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  input, textarea, select { font: inherit; width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+  label { font-size: 13px; color: var(--muted); display: block; margin: 10px 0 4px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .login { max-width: 380px; margin: 60px auto; }
+  .tabs { display: flex; gap: 6px; margin: 18px 0 6px; flex-wrap: wrap; }
+  .tabs button.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .muted { color: var(--muted); font-size: 13px; }
+  .err { color: #b91c1c; font-size: 13px; min-height: 18px; margin-top: 8px; }
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; }
+  .toast.show { opacity: 1; }
+  .list { display: grid; gap: 10px; }
+  .item { display: grid; grid-template-columns: 64px 1fr; gap: 14px; }
+  .votebox { text-align: center; }
+  .votebox .n { font-size: 22px; font-weight: 700; }
+  .votebox button { width: 100%; padding: 4px 0; font-size: 13px; }
+  .votebox button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .title { font-weight: 650; font-size: 16px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+  .tag { font-size: 12px; background: #f3efe8; border-radius: 99px; padding: 2px 8px; color: var(--muted); }
+  .tag.cat { background: var(--accent-soft); color: var(--accent); }
+  .lead { margin-top: 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+  .lead .who { background: var(--ok-soft); color: var(--ok); padding: 2px 10px; border-radius: 99px; font-weight: 600; }
+  .plan { margin-top: 8px; background: #fbfaf7; border: 1px dashed var(--line); border-radius: 8px; padding: 8px 10px; font-size: 14px; white-space: pre-wrap; }
+  .rank { color: var(--gold); font-weight: 700; margin-right: 6px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); font-size: 14px; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .hidden { display: none !important; }
+  .filters { display: flex; gap: 8px; margin: 10px 0; }
+  .filters { flex-wrap: wrap; }
+  .filters select { width: auto; }
+  .voters { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; align-items: center; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; background: #f3efe8; border-radius: 99px; padding: 2px 9px 2px 2px; }
+  .chip .av { width: 20px; height: 20px; border-radius: 50%; color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+  .chip.me { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .best { border: 2px solid var(--gold); background: linear-gradient(180deg, #fff8e8, #fff); margin-bottom: 14px; }
+  .best .badge { display: inline-block; background: var(--gold); color: #fff; font-size: 12px; font-weight: 700; padding: 2px 10px; border-radius: 99px; margin-bottom: 6px; }
+  .item.top { border-color: var(--gold); }
+  .item { grid-template-columns: 64px 150px 1fr; }
+  .thumb { width: 150px; height: 112px; border-radius: 10px; overflow: hidden; position: relative; display: grid; place-items: center; font-size: 40px; color: #fff; }
+  .thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .thumb a { position: absolute; inset: 0; }
+  .best-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid #f1e6cf; }
+  .best-row:first-of-type { border-top: 0; }
+  .best-row .thumb { width: 120px; height: 84px; flex: none; font-size: 30px; }
+  .rank-big { width: 34px; flex: none; text-align: center; font-size: 22px; font-weight: 700; color: var(--gold); padding-top: 24px; }
+  .credit { text-align: center; font-size: 12px; color: var(--muted); margin: 24px 0 8px; }
+  .credit a { color: inherit; }
+  @media (max-width: 560px) {
+    .item { grid-template-columns: 52px 1fr; }
+    .item .thumb { grid-column: 2; grid-row: 1; width: 100%; height: 150px; }
+    .item > .body { grid-column: 1 / -1; }
+    .best-row { flex-wrap: wrap; } .best-row .thumb { width: calc(100% - 46px); height: 140px; }
+    .best-row > div:last-child { flex-basis: 100%; }
+  }
+  .bar { height: 6px; background: #f3efe8; border-radius: 99px; margin-top: 8px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--gold); }
+  @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } .item { gap: 10px; } }
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>🛺 Bangkok <span>Trip Planner</span></h1>
+  <div id="whoami" class="row hidden"><span id="meName"></span><button class="ghost" onclick="logout()">Log out</button></div>
+</div></header>
+
+<!-- Login / register -->
+<div id="loginView" class="wrap hidden">
+  <div class="card login">
+    <h2 style="margin-top:0">Join the trip</h2>
+    <p class="muted">Up to <b id="maxMembers">10</b> travellers. New here? Pick a name and password and press <b>Register</b>.</p>
+    <form id="loginForm">
+      <label>Name</label><input id="lUser" autocomplete="username" required>
+      <label>Password</label><input id="lPass" type="password" autocomplete="current-password" required>
+      <div class="row" style="margin-top:14px">
+        <button class="primary" type="submit">Log in</button>
+        <button type="button" onclick="auth('register')">Register</button>
+      </div>
+      <div class="err" id="lErr"></div>
+    </form>
+  </div>
+</div>
+
+<!-- App -->
+<div id="appView" class="wrap hidden">
+  <div class="tabs">
+    <button data-tab="poll" class="active">Vote on itineraries</button>
+    <button data-tab="plan">Final plan & leads</button>
+    <button data-tab="propose">Propose an idea</button>
+  </div>
+
+  <section id="tab-poll">
+    <p class="muted" id="voteInfo"></p>
+    <div id="bestBox"></div>
+    <div class="filters">
+      <select id="sortBy">
+        <option value="votes">Sort: most votes first</option>
+        <option value="fewest">Sort: fewest votes first</option>
+        <option value="az">Sort: A–Z</option>
+      </select>
+      <select id="minVotes"><option value="0">Any number of votes</option></select>
+      <select id="catFilter"><option value="">All categories</option></select>
+      <select id="leadFilter"><option value="">Any status</option><option value="open">Needs a lead</option><option value="taken">Has a lead</option></select>
+    </div>
+    <p class="muted" id="filterInfo"></p>
+    <div class="list" id="pollList"></div>
+  </section>
+
+  <section id="tab-plan" class="hidden">
+    <h2>Who's in charge of what</h2>
+    <div class="card"><table><thead><tr><th>Traveller</th><th>Leads</th><th>Votes used</th></tr></thead><tbody id="memberRows"></tbody></table></div>
+    <h2>Top picks (by votes)</h2>
+    <p class="muted">The top 10 itineraries — ideally one per traveller. Leads set the day and logistics.</p>
+    <div class="list" id="topList"></div>
+  </section>
+
+  <section id="tab-propose" class="hidden">
+    <h2>Propose a new itinerary</h2>
+    <form class="card" id="proposeForm">
+      <label>Title *</label><input name="title" required maxlength="120" placeholder="e.g. Sunset dinner cruise on the Chao Phraya">
+      <div class="grid2">
+        <div><label>Category</label><select name="category"><option>Culture</option><option>Food</option><option>Shopping</option><option>Nightlife</option><option>Day trip</option><option>Outdoors</option><option>Wellness</option><option>Family / fun</option><option>Other</option></select></div>
+        <div><label>Area</label><input name="area" maxlength="80" placeholder="e.g. Riverside"></div>
+        <div><label>Duration</label><input name="duration" maxlength="60" placeholder="e.g. Evening"></div>
+        <div><label>Est. cost</label><input name="cost" maxlength="60" placeholder="e.g. ฿1,500 pp"></div>
+      </div>
+      <label>Description</label><textarea name="description" rows="3" maxlength="1000"></textarea>
+      <label>Photo link (optional, https://…)</label><input name="image" type="url" maxlength="500" placeholder="Paste an image address, or leave blank for a placeholder">
+      <div class="row" style="margin-top:8px"><div class="thumb" id="previewThumb"></div><span class="muted">Thumbnail preview</span></div>
+      <div style="margin-top:12px"><button class="primary">Add to poll</button></div>
+    </form>
+  </section>
+  <p class="credit">Itinerary photos from <a href="https://en.wikipedia.org" target="_blank" rel="noopener">Wikipedia</a> / Wikimedia Commons; click a photo to see the source page and license.</p>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let me = null, maxVotes = 3, state = { itineraries: [], members: [] };
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function call(path, body) {
+  const res = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && me) { me = null; show(); }
+  if (!res.ok) throw new Error(data.error || 'Something went wrong');
+  return data;
+}
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2600); }
+
+async function init() {
+  const d = await call('/api/me');
+  me = d.user; maxVotes = d.maxVotes; $('#maxMembers').textContent = d.maxMembers;
+  show();
+}
+function show() {
+  $('#loginView').classList.toggle('hidden', !!me);
+  $('#appView').classList.toggle('hidden', !me);
+  $('#whoami').classList.toggle('hidden', !me);
+  if (me) { $('#meName').textContent = '👋 ' + me.username; refresh(); }
+}
+
+async function auth(kind) {
+  $('#lErr').textContent = '';
+  try {
+    const d = await call('/api/' + kind, { username: $('#lUser').value, password: $('#lPass').value });
+    me = d.user; $('#lPass').value = ''; show();
+  } catch (e) { $('#lErr').textContent = e.message; }
+}
+$('#loginForm').addEventListener('submit', (e) => { e.preventDefault(); auth('login'); });
+async function logout() { await call('/api/logout', {}); me = null; show(); }
+
+async function refresh() {
+  state = await call('/api/state');
+  render();
+}
+async function act(id, action, body = {}) {
+  try { await call(`/api/itineraries/${id}/${action}`, body); await refresh(); }
+  catch (e) { toast(e.message); }
+}
+
+const COLORS = ['#c2410c', '#0f766e', '#7c3aed', '#be185d', '#1d4ed8', '#b45309', '#15803d', '#9f1239', '#0369a1', '#4d7c0f'];
+function avatar(name) {
+  const m = state.members.find((x) => x.username === name);
+  const color = COLORS[((m ? m.id : name.length) - 1) % COLORS.length];
+  return `<span class="av" style="background:${color}">${esc(name.slice(0, 1).toUpperCase())}</span>`;
+}
+function votersHTML(it) {
+  const names = it.voters ? it.voters.split(', ') : [];
+  if (!names.length) return '<div class="voters muted">No votes yet. Be the first!</div>';
+  return `<div class="voters"><span class="muted">Voted by:</span>${names.map((n) =>
+    `<span class="chip ${n === me.username ? 'me' : ''}">${avatar(n)}${esc(n)}${n === me.username ? ' (you)' : ''}</span>`).join('')}</div>`;
+}
+// ---------- thumbnails ----------
+// image is "wiki:<Page_Title>" (photo looked up from Wikipedia), an https URL, or empty (placeholder)
+const CAT_STYLE = {
+  'Culture': ['🛕', '#b45309', '#f59e0b'], 'Food': ['🍜', '#c2410c', '#fb923c'], 'Shopping': ['🛍️', '#be185d', '#f472b6'],
+  'Nightlife': ['🌃', '#312e81', '#7c3aed'], 'Day trip': ['🚐', '#0f766e', '#2dd4bf'], 'Outdoors': ['🌳', '#15803d', '#4ade80'],
+  'Wellness': ['💆', '#0e7490', '#67e8f9'], 'Family / fun': ['🦒', '#a16207', '#facc15'],
+};
+const wikiPhotos = (() => { try { return JSON.parse(localStorage.getItem('wikiPhotos') || '{}'); } catch { return {}; } })();
+const pendingWiki = new Set();
+
+function imageInfo(src) {
+  if (!src) return null;
+  if (src.startsWith('wiki:')) {
+    const page = src.slice(5);
+    return { url: wikiPhotos[page] || null, link: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(page), page };
+  }
+  return { url: src, link: src };
+}
+function thumbHTML(it) {
+  const [emoji, c1, c2] = CAT_STYLE[it.category] || ['✨', '#57534e', '#a8a29e'];
+  const info = imageInfo(it.image);
+  if (info && info.page && !info.url) loadWikiPhoto(info.page);
+  const img = info && info.url ? `<img src="${esc(info.url)}" alt="${esc(it.title)}" loading="lazy" onerror="this.remove()">` : '';
+  const link = info && info.url ? `<a href="${esc(info.link)}" target="_blank" rel="noopener" title="Photo source"></a>` : '';
+  return `<div class="thumb" style="background:linear-gradient(135deg,${c1},${c2})">${emoji}${img}${link}</div>`;
+}
+async function loadWikiPhoto(page) {
+  if (pendingWiki.has(page)) return;
+  pendingWiki.add(page);
+  try {
+    const r = await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(page));
+    const d = await r.json();
+    if (d.thumbnail && d.thumbnail.source) {
+      wikiPhotos[page] = d.thumbnail.source;
+      try { localStorage.setItem('wikiPhotos', JSON.stringify(wikiPhotos)); } catch {}
+      clearTimeout(loadWikiPhoto._t);
+      loadWikiPhoto._t = setTimeout(render, 150); // re-render once a batch of photos arrives
+    }
+  } catch { /* keep the placeholder */ }
+}
+
+// The 5 itineraries with the most votes (ignores 0-vote ones); the server already sorts by votes
+const topFive = () => state.itineraries.filter((i) => i.votes > 0).slice(0, 5);
+// Rank where ties share a place (e.g. 1, 2, 2, 4)
+const rankOf = (it) => 1 + state.itineraries.filter((i) => i.votes > it.votes).length;
+const topVotes = () => Math.max(0, ...state.itineraries.map((i) => i.votes));
+
+function itemHTML(it, rank) {
+  const mineLead = it.lead_id === me.id;
+  const iLeadSomething = state.itineraries.some((x) => x.lead_id === me.id);
+  let lead;
+  if (it.lead_id) {
+    lead = `<span class="muted">Lead:</span> <span class="who">${esc(it.lead_name)}</span>` +
+      (mineLead ? ` <button onclick="editPlan(${it.id})">Edit plan</button> <button onclick="act(${it.id},'release')">Step down</button>` : '');
+  } else {
+    lead = `<span class="muted">No lead yet</span> <button ${iLeadSomething ? 'disabled title="You already lead an itinerary"' : ''} onclick="act(${it.id},'claim')">I'll be in charge</button>`;
+  }
+  const plan = (it.day || it.notes) ? `<div class="plan">${it.day ? '<b>📅 ' + esc(it.day) + '</b>\n' : ''}${esc(it.notes)}</div>` : '';
+  const del = it.created_by === me.id ? ` <button onclick="if(confirm('Delete this idea?')) act(${it.id},'delete')">Delete</button>` : '';
+  const best = topVotes();
+  const pct = best ? Math.round((it.votes / best) * 100) : 0;
+  return `<div class="card item ${topFive().includes(it) ? 'top' : ''}">
+    <div class="votebox"><div class="n">${it.votes}</div><div class="muted" style="margin-bottom:4px">vote${it.votes === 1 ? '' : 's'}</div>
+      <button class="${it.my_vote ? 'on' : ''}" onclick="act(${it.id},'vote')">${it.my_vote ? '✓ Voted' : 'Vote'}</button></div>
+    ${thumbHTML(it)}
+    <div class="body">
+      <div class="title">${rank ? `<span class="rank">#${rank}</span>` : ''}${esc(it.title)}</div>
+      <div class="meta">${it.category ? `<span class="tag cat">${esc(it.category)}</span>` : ''}${['area', 'duration', 'cost'].filter((k) => it[k]).map((k) => `<span class="tag">${esc(it[k])}</span>`).join('')}</div>
+      <div>${esc(it.description)}</div>
+      ${best ? `<div class="bar" title="${pct}% of the top itinerary's votes"><div style="width:${pct}%"></div></div>` : ''}
+      ${votersHTML(it)}
+      <div class="lead">${lead}${del}</div>
+      ${plan}
+    </div></div>`;
+}
+
+function render() {
+  const used = state.itineraries.filter((i) => i.my_vote).length;
+  $('#voteInfo').innerHTML = `You have used <b>${used} of ${maxVotes}</b> votes. Click again to remove a vote. Each traveller can be in charge of <b>one</b> itinerary.`;
+
+  const cats = [...new Set(state.itineraries.map((i) => i.category).filter(Boolean))].sort();
+  const sel = $('#catFilter'), cur = sel.value;
+  sel.innerHTML = '<option value="">All categories</option>' + cats.map((c) => `<option ${c === cur ? 'selected' : ''}>${esc(c)}</option>`).join('');
+  const lf = $('#leadFilter').value;
+
+  // Top 5 itineraries by votes (tied itineraries share a rank)
+  const best = topVotes();
+  const top = topFive();
+  const tiedOut = top.length ? state.itineraries.filter((i) => !top.includes(i) && i.votes === top[top.length - 1].votes).length : 0;
+  const MEDALS = ['🥇', '🥈', '🥉'];
+  $('#bestBox').innerHTML = top.length ? `<div class="card best">
+      <span class="badge">🏆 Top ${top.length} itinerar${top.length === 1 ? 'y' : 'ies'} so far</span>
+      ${top.map((w) => {
+        const rank = rankOf(w);
+        return `<div class="best-row">
+          <div class="rank-big">${MEDALS[rank - 1] || '#' + rank}</div>
+          ${thumbHTML(w)}
+          <div><div class="title">${esc(w.title)}</div>
+            <div class="muted"><b>${w.votes}</b> vote${w.votes === 1 ? '' : 's'}${w.lead_name ? ` · Lead: ${esc(w.lead_name)}` : ' · No lead yet'}</div>
+            ${votersHTML(w)}</div></div>`;
+      }).join('')}
+      ${tiedOut ? `<p class="muted" style="margin:8px 0 0">+${tiedOut} more tied at ${top[top.length - 1].votes} vote${top[top.length - 1].votes === 1 ? '' : 's'}.</p>` : ''}
+    </div>` : '';
+
+  // Vote filter: "Top 5 only", or a minimum number of votes from 1 up to the best itinerary's count
+  const mv = $('#minVotes'), prev = mv.value;
+  const minCur = prev === 'top5' ? 0 : Math.min(Number(prev) || 0, best);
+  mv.innerHTML = '<option value="0">Any number of votes</option>' +
+    (top.length ? `<option value="top5" ${prev === 'top5' ? 'selected' : ''}>Top 5 only</option>` : '') +
+    Array.from({ length: best }, (_, k) => k + 1).map((n) =>
+      `<option value="${n}" ${n === minCur ? 'selected' : ''}>${n}+ votes</option>`).join('');
+  const onlyTop = mv.value === 'top5';
+
+  const sortBy = $('#sortBy').value;
+  const shown = state.itineraries
+    .filter((i) => (onlyTop ? top.includes(i) : i.votes >= minCur) && (!cur || i.category === cur) && (!lf || (lf === 'open' ? !i.lead_id : i.lead_id)))
+    .sort((a, b) => sortBy === 'az' ? a.title.localeCompare(b.title)
+      : sortBy === 'fewest' ? a.votes - b.votes || a.id - b.id
+      : b.votes - a.votes || a.id - b.id);
+  $('#filterInfo').textContent = `Showing ${shown.length} of ${state.itineraries.length} itineraries` + (minCur ? ` with ${minCur}+ votes` : '') + '.';
+  $('#pollList').innerHTML = shown.map((i) => itemHTML(i)).join('') || '<p class="muted">Nothing matches.</p>';
+
+  $('#memberRows').innerHTML = state.members.map((m) =>
+    `<tr><td>${esc(m.username)}${m.id === me.id ? ' (you)' : ''}</td><td>${m.leads ? esc(m.leads) : '<span class="muted">— not yet</span>'}</td><td>${m.votes_used}/${maxVotes}</td></tr>`).join('');
+  $('#topList').innerHTML = state.itineraries.filter((i) => i.votes > 0).slice(0, 10).map((i, n) => itemHTML(i, n + 1)).join('') || '<p class="muted">No votes yet.</p>';
+}
+$('#catFilter').addEventListener('change', render);
+$('#leadFilter').addEventListener('change', render);
+$('#sortBy').addEventListener('change', render);
+$('#minVotes').addEventListener('change', render);
+
+function editPlan(id) {
+  const it = state.itineraries.find((i) => i.id === id);
+  const day = prompt('Which day / time? (e.g. "Day 2 — Sat 8am")', it.day || '');
+  if (day === null) return;
+  const notes = prompt('Plan notes: meeting point, bookings, transport, budget…', it.notes || '');
+  if (notes === null) return;
+  act(id, 'details', { day, notes });
+}
+
+document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('active', x === b));
+  ['poll', 'plan', 'propose'].forEach((t) => $('#tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
+  if (me) refresh();
+}));
+
+function updatePreview() {
+  const f = $('#proposeForm');
+  const url = f.image.value.trim();
+  $('#previewThumb').outerHTML = thumbHTML({ category: f.category.value, image: /^https:\/\//.test(url) ? url : '', title: 'Preview' })
+    .replace('class="thumb"', 'class="thumb" id="previewThumb"');
+}
+$('#proposeForm').addEventListener('input', updatePreview);
+updatePreview();
+
+$('#proposeForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await call('/api/itineraries', Object.fromEntries(new FormData(e.target)));
+    e.target.reset(); updatePreview(); toast('Added to the poll!');
+    document.querySelector('[data-tab="poll"]').click();
+  } catch (err) { toast(err.message); }
+});
+
+setInterval(() => { if (me && !document.hidden) refresh(); }, 10000);
+init();
+</script>
+</body>
+</html>

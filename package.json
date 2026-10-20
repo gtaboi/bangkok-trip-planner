@@ -1,0 +1,9 @@
+{
+  "name": "bangkok-trip-planner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Plan a Bangkok group trip: vote on itineraries and pick who leads each one",
+  "main": "server.js",
+  "engines": { "node": ">=22.5" },
+  "scripts": { "start": "node server.js" }
+}
