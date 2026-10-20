@@ -30,9 +30,9 @@ A web app for a group trip to Bangkok. Up to 10 travellers register, vote on iti
   - Routes are in a `ROUTES` map plus an `ACTIONS` map for `POST /api/itineraries/:id/(vote|claim|release|details|delete)`. Each item action runs inside `store.tx()` (`BEGIN IMMEDIATE`), so a check and the write that follows it are atomic.
   - `MAX_MEMBERS`, `MAX_VOTES` and `MIN_PASSWORD` are at the top. The client reads them from `GET /api/me`, so change them only here.
 - **`lib/rules.js`:** pure decision functions (`decideVote`, `decideDelete`, `validateRegistration`, `normalizeImage`, …). They return either a result or `{ status, error }`, and have no I/O. New trip rules go here, with unit tests.
-- **`lib/db.js`:** `openDb(path)` handles the schema, **in-place migrations** (`hasColumn` + `ALTER TABLE`, which must keep working on a DB created by older versions), seeding from `lib/seed.js`, and statements prepared once. `PRAGMA foreign_keys = ON` must be set on every connection, including ad-hoc `node -e` scripts. Votes cascade when an itinerary is deleted, which is why `decideDelete` refuses once other people's votes or a lead are attached.
+- **`lib/db.js`:** `openDb(path)` handles the schema, **in-place migrations** (`hasColumn` + `ALTER TABLE`, which must keep working on a DB created by older versions), seeding from `lib/seed.js`, and statements prepared once. A new column goes in **both** `SCHEMA` (fresh DBs) and `migrate()` (existing DBs). `test/db.test.js` rebuilds the original `main` schema to check the upgrade path. `PRAGMA foreign_keys = ON` must be set on every connection, including ad-hoc `node -e` scripts. Votes cascade when an itinerary is deleted, which is why `decideDelete` refuses once other people's votes or a lead are attached.
 - **`lib/security.js`:**
-  - the security headers and CSP, on every response
+  - the security headers and CSP, on every response. A new external image or API host must be added to the CSP here, or the browser blocks it. Static files are served only for extensions in the `TYPES` map in `server.js`; anything else returns 404.
   - the check that POSTs use `Content-Type: application/json` (415 otherwise), and that any `Origin` matches `Host` (403 otherwise)
   - `readBody` (413 over 100 KB, 400 for invalid JSON)
   - the in-memory login/invite rate limiter
