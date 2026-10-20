@@ -1,0 +1,32 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# In the Render dashboard choose New > Blueprint, pick this repo, and enter TRIP_CODE when asked.
+#
+# Free plan: the filesystem is temporary, so trip.db (every registration and vote) is
+# wiped whenever the service restarts, redeploys, or wakes up after ~15 minutes idle.
+# To keep the data, switch to `plan: starter`, uncomment `disk`, and set TRIP_DB to
+# /var/data/trip.db.
+services:
+  - type: web
+    name: bangkok-trip-planner
+    runtime: node
+    plan: free
+    branch: main
+    autoDeploy: true
+    buildCommand: npm ci --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /api/me
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: HOST            # Render routes traffic to 0.0.0.0:$PORT (PORT is set by Render)
+        value: 0.0.0.0
+      - key: TRUST_PROXY     # rate-limit by the visitor's address, not Render's proxy
+        value: "1"
+      - key: COOKIE_SECURE   # Render serves the app over HTTPS
+        value: "1"
+      - key: TRIP_CODE       # invite code for registering; entered in the dashboard, never committed
+        sync: false
+    # disk:
+    #   name: trip-data
+    #   mountPath: /var/data
+    #   sizeGB: 1

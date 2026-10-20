@@ -4,6 +4,18 @@
   "private": true,
   "description": "Plan a Bangkok group trip: vote on itineraries and pick who leads each one",
   "main": "server.js",
-  "engines": { "node": ">=22.5" },
-  "scripts": { "start": "node server.js" }
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test",
+    "lint": "eslint .",
+    "check": "npm run lint && npm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0"
+  }
 }
