@@ -1,224 +1,321 @@
 // Bangkok Trip Planner — zero-dependency Node server (Node 22.5+ for node:sqlite)
+'use strict';
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { DatabaseSync } = require('node:sqlite');
+const { promisify } = require('node:util');
 
-const PORT = process.env.PORT || 3000;
+const { openDb, SESSION_MS } = require('./lib/db');
+const { createImageResolver } = require('./lib/images');
+const rules = require('./lib/rules');
+const {
+  SECURITY_HEADERS, HttpError, checkOrigin, checkContentType, readBody,
+  createRateLimiter, readSid, hashToken, safeEqual,
+} = require('./lib/security');
+
+// ---------- settings (the client reads these from GET /api/me) ----------
 const MAX_MEMBERS = 10;
 const MAX_VOTES = 3;
+const MIN_PASSWORD = 8;
+const LOGIN_MAX_FAILURES = 10;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const BODY_LIMIT = 100 * 1024;
+const PRUNE_EVERY_MS = 60 * 60 * 1000;
 
-const db = new DatabaseSync(path.join(__dirname, 'trip.db'));
-db.exec(`
-  PRAGMA foreign_keys = ON;
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL COLLATE NOCASE,
-    salt TEXT NOT NULL, hash TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-  CREATE TABLE IF NOT EXISTS sessions (
-    token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE);
-  CREATE TABLE IF NOT EXISTS itineraries (
-    id INTEGER PRIMARY KEY, title TEXT NOT NULL, category TEXT, area TEXT,
-    duration TEXT, cost TEXT, description TEXT,
-    lead_id INTEGER UNIQUE REFERENCES users(id) ON DELETE SET NULL,
-    day TEXT, notes TEXT, image TEXT, created_by INTEGER REFERENCES users(id) ON DELETE SET NULL);
-  CREATE TABLE IF NOT EXISTS votes (
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    itinerary_id INTEGER NOT NULL REFERENCES itineraries(id) ON DELETE CASCADE,
-    PRIMARY KEY (user_id, itinerary_id));
-`);
+const PUBLIC = path.join(__dirname, 'public');
+const TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.json': 'application/json; charset=utf-8',
+};
+const ITEM_ROUTE = /^\/api\/itineraries\/(\d+)\/(vote|claim|release|details|delete)$/;
 
-// Seed the poll with Bangkok itinerary ideas on first run
-const SEED = [
-  ['Grand Palace, Wat Phra Kaew & Wat Pho', 'Culture', 'Rattanakosin', 'Half day', '฿500–700 pp', 'The Emerald Buddha, the royal palace complex, and the giant Reclining Buddha. Dress code: covered shoulders and knees. Go early to beat heat and crowds.', 'wiki:Grand_Palace'],
-  ['Wat Arun at sunset + Chao Phraya boat', 'Culture', 'Thonburi / Riverside', '3–4 hours', '฿200 pp', 'Cross by ferry to the Temple of Dawn, climb the prang, then ride the orange-flag river boat as the sun goes down.', 'wiki:Wat_Arun'],
-  ['Chatuchak Weekend Market', 'Shopping', 'Chatuchak', 'Half day (Sat/Sun)', 'Bring cash', '15,000+ stalls: clothes, antiques, plants, coconut ice cream. Arrive by 10am and set a meeting point.', 'wiki:Chatuchak_Weekend_Market'],
-  ['Yaowarat (Chinatown) street-food crawl', 'Food', 'Chinatown', 'Evening', '฿500–800 pp', 'Neon signs, Michelin-listed stalls, guay jub, toasted buns, seafood. Best after 6pm.', 'wiki:Yaowarat_Road'],
-  ['Damnoen Saduak Floating Market + Maeklong Railway Market', 'Day trip', 'Ratchaburi / Samut Songkhram', 'Full day', '฿1,200–1,800 pp (tour)', 'Boat ride through the floating market, then watch the train roll through the market stalls at Maeklong.', 'wiki:Damnoen_Saduak_floating_market'],
-  ['Ayutthaya ancient capital day trip', 'Day trip', 'Ayutthaya', 'Full day', '฿1,000–2,000 pp', 'UNESCO temple ruins, the Buddha head in tree roots at Wat Mahathat. Train, van, or private driver; rent bikes on site.', 'wiki:Wat_Mahathat_(Ayutthaya)'],
-  ['Muay Thai night at Rajadamnern Stadium', 'Nightlife', 'Pom Prap', 'Evening', '฿2,000+ pp', 'Live Thai boxing at the historic stadium. Ringside or club seats for a group.', 'wiki:Rajadamnern_Stadium'],
-  ['Rooftop bar evening (Sky Bar / Octave / Tichuca)', 'Nightlife', 'Silom / Sukhumvit', 'Evening', '฿600–1,000 pp', 'Skyline views and cocktails. Smart-casual dress code; book a table for 10.', 'wiki:Lebua_at_State_Tower'],
-  ['Thai cooking class + local market tour', 'Food', 'Silom / Sukhumvit', 'Half day', '฿1,200–1,800 pp', 'Shop a wet market with a chef, then cook 4–5 dishes (pad thai, green curry, mango sticky rice).', 'wiki:Pad_thai'],
-  ['Jim Thompson House + Siam shopping', 'Culture', 'Siam', 'Half day', '฿200 + shopping', 'Teak-house museum of the silk king, then MBK, Siam Paragon and Siam Square One.', 'wiki:Jim_Thompson_House'],
-  ['ICONSIAM + Asiatique riverfront night', 'Shopping', 'Riverside', 'Afternoon–evening', 'Free entry', 'Indoor floating market (SookSiam) at ICONSIAM, then the Asiatique Ferris wheel and night bazaar.', 'wiki:Asiatique'],
-  ['Bang Krachao "Green Lung" bike tour', 'Outdoors', 'Bang Krachao', 'Half day', '฿100 bike rental', 'Cross the river by longtail and cycle elevated paths through jungle, orchards, and a weekend market.', 'wiki:Bang_Kachao'],
-  ['Traditional Thai massage at Wat Pho school', 'Wellness', 'Rattanakosin', '1–2 hours', '฿420–600 pp', 'The birthplace of Thai massage. Pair with the Grand Palace morning, or book a spa afternoon for the group.', 'wiki:Thai_massage'],
-  ['Khao San Road night out', 'Nightlife', 'Banglamphu', 'Evening', '฿500+ pp', 'Backpacker street with bars, street food, and live music. Rambuttri Alley is a calmer alternative.', 'wiki:Khaosan_Road'],
-  ['Erawan Museum + Ancient City (Muang Boran)', 'Culture', 'Samut Prakan', 'Full day', '฿700–1,000 pp', 'A three-headed elephant museum, then an open-air park of Thai landmarks you explore by golf cart or bike.', 'wiki:Erawan_Museum'],
-  ['Safari World & Marine Park', 'Family / fun', 'Khlong Sam Wa', 'Full day', '฿1,500 pp', 'Drive-through safari plus animal shows. A good pick if the group wants something lighthearted.', 'wiki:Safari_World'],
-  ['Jodd Fairs night market', 'Food', 'Rama IX', 'Evening', '฿300–600 pp', 'Volcano ribs, grilled seafood, and bars; easy to reach by MRT.', null],
-  ['Lumpini Park morning + Sukhumvit brunch', 'Outdoors', 'Lumpini / Sukhumvit', 'Morning', '฿400 pp', 'Jog or walk with the monitor lizards, then a long brunch in Thonglor or Ekkamai.', 'wiki:Lumphini_Park'],
-];
-// Migrate databases created before thumbnails existed
-if (!db.prepare('PRAGMA table_info(itineraries)').all().some((c) => c.name === 'image')) {
-  db.exec('ALTER TABLE itineraries ADD COLUMN image TEXT');
-}
-if (db.prepare('SELECT COUNT(*) AS n FROM itineraries').get().n === 0) {
-  const ins = db.prepare('INSERT INTO itineraries (title, category, area, duration, cost, description, image) VALUES (?,?,?,?,?,?,?)');
-  for (const row of SEED) ins.run(...row);
-} else {
-  const fill = db.prepare('UPDATE itineraries SET image = ? WHERE title = ? AND image IS NULL');
-  for (const row of SEED) if (row[6]) fill.run(row[6], row[0]);
+// ---------- passwords ----------
+const scrypt = promisify(crypto.scrypt);
+const hashPassword = async (pw, salt) => (await scrypt(pw, salt, 64)).toString('hex');
+const DUMMY_SALT = crypto.randomBytes(16).toString('hex');
+
+/** Always runs one scrypt, even for unknown users, so timing doesn't reveal which names exist. */
+async function verifyPassword(password, user) {
+  const salt = user ? user.salt : DUMMY_SALT;
+  const actual = Buffer.from(await hashPassword(password, salt), 'hex');
+  if (!user) return false;
+  const expected = Buffer.from(user.hash, 'hex');
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 
-// ---------- helpers ----------
-const hashPw = (pw, salt) => crypto.scryptSync(pw, salt, 64).toString('hex');
+// ---------- responses ----------
+const reply = (status, body, headers = {}) => ({ status, body, headers });
+const ok = (body = { ok: true }, headers) => reply(200, body, headers);
+const fail = (status, error, headers) => reply(status, { error }, headers);
+const refuse = (decision) => fail(decision.status, decision.error);
+const tooMany = (ms) => {
+  const min = Math.max(1, Math.ceil(ms / 60000));
+  return fail(429, `Too many attempts, try again in ${min} minute${min === 1 ? '' : 's'}`,
+    { 'Retry-After': String(Math.ceil(ms / 1000)) });
+};
 
-function send(res, status, body, headers = {}) {
-  res.writeHead(status, { 'Content-Type': 'application/json', ...headers });
+function send(res, { status, body, headers }) {
+  res.writeHead(status, {
+    ...SECURITY_HEADERS,
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    ...headers,
+  });
   res.end(JSON.stringify(body));
 }
 
-function readBody(req) {
-  return new Promise((resolve) => {
-    let data = '';
-    req.on('data', (c) => { data += c; if (data.length > 1e5) req.destroy(); });
-    req.on('end', () => { try { resolve(JSON.parse(data || '{}')); } catch { resolve({}); } });
-  });
+function sendText(res, status, text, headers = {}) {
+  res.writeHead(status, { ...SECURITY_HEADERS, 'Content-Type': 'text/plain; charset=utf-8', ...headers });
+  res.end(text);
 }
 
-function currentUser(req) {
-  const m = /(?:^|;\s*)sid=([a-f0-9]+)/.exec(req.headers.cookie || '');
-  if (!m) return null;
-  return db.prepare('SELECT u.id, u.username FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?').get(m[1]) || null;
+async function serveStatic(req, res, url) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return sendText(res, 405, 'Method not allowed', { Allow: 'GET, HEAD' });
+  let rel;
+  try { rel = decodeURIComponent(url.pathname); } catch { return sendText(res, 400, 'Bad request'); }
+  if (rel === '/') rel = '/index.html';
+  const file = path.join(PUBLIC, path.normalize(rel));
+  const type = TYPES[path.extname(file).toLowerCase()];
+  const hidden = rel.split('/').some((seg) => seg.startsWith('.'));
+  if (!type || hidden || rel.includes('\0') || !file.startsWith(PUBLIC + path.sep)) return sendText(res, 404, 'Not found');
+  let stat;
+  try { stat = await fs.promises.stat(file); } catch { stat = null; }
+  if (!stat || !stat.isFile()) return sendText(res, 404, 'Not found');
+  res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': type, 'Content-Length': stat.size, 'Cache-Control': 'no-cache' });
+  if (req.method === 'HEAD') return res.end();
+  fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
 }
 
-function startSession(res, user) {
-  const token = crypto.randomBytes(32).toString('hex');
-  db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?)').run(token, user.id);
-  send(res, 200, { user: { id: user.id, username: user.username } }, {
-    'Set-Cookie': `sid=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000`,
-  });
-}
+// ---------- app ----------
+/**
+ * Build the HTTP server (not listening yet).
+ * @param {object} o
+ * @param {object|string} [o.db]   store from openDb(), or a path (default ':memory:')
+ * @param {object} [o.env]         env vars: TRIP_CODE, COOKIE_SECURE, TRIP_OFFLINE
+ * @param {Function|false} [o.fetch] fetch used for Wikipedia lookups; false disables them
+ */
+function createApp({ db, env = process.env, fetch: fetchOpt, imageDelayMs = 500, log = console } = {}) {
+  const store = db && typeof db === 'object' ? db : openDb(db || ':memory:');
+  const inviteCode = String(env.TRIP_CODE || '').trim();
+  const forceSecure = env.COOKIE_SECURE === '1';
+  const fetchFn = fetchOpt === false || env.TRIP_OFFLINE === '1' ? null : (fetchOpt || globalThis.fetch);
+  const limiter = createRateLimiter({ max: LOGIN_MAX_FAILURES, windowMs: LOGIN_WINDOW_MS });
+  const images = createImageResolver({ store, fetch: fetchFn, delayMs: imageDelayMs, log });
 
-const clean = (v, max = 500) => String(v ?? '').trim().slice(0, max);
+  const isSecure = (req) => forceSecure
+    || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase() === 'https';
+  const cookie = (req, value, maxAgeSec) =>
+    `sid=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAgeSec}${isSecure(req) ? '; Secure' : ''}`;
+  const clearCookie = (req) => ({ 'Set-Cookie': cookie(req, '', 0) });
 
-function listItineraries(userId) {
-  return db.prepare(`
-    SELECT i.*, u.username AS lead_name,
-      (SELECT COUNT(*) FROM votes v WHERE v.itinerary_id = i.id) AS votes,
-      EXISTS(SELECT 1 FROM votes v WHERE v.itinerary_id = i.id AND v.user_id = ?) AS my_vote,
-      (SELECT GROUP_CONCAT(uu.username, ', ') FROM votes v JOIN users uu ON uu.id = v.user_id WHERE v.itinerary_id = i.id) AS voters
-    FROM itineraries i LEFT JOIN users u ON u.id = i.lead_id
-    ORDER BY votes DESC, i.id ASC`).all(userId);
-}
+  function currentUser(req) {
+    const sid = readSid(req);
+    return sid ? store.sessionUser(hashToken(sid), Date.now()) : null;
+  }
 
-// ---------- API ----------
-async function api(req, res, url) {
-  const route = `${req.method} ${url.pathname}`;
+  function startSession(req, user) {
+    const token = crypto.randomBytes(32).toString('hex');
+    const now = Date.now();
+    store.createSession(hashToken(token), user.id, now, now + SESSION_MS);
+    return ok({ user: { id: user.id, username: user.username } },
+      { 'Set-Cookie': cookie(req, token, SESSION_MS / 1000) });
+  }
 
-  if (route === 'POST /api/register') {
-    const { username, password } = await readBody(req);
-    const name = clean(username, 30);
-    if (!/^[\w .-]{2,30}$/.test(name)) return send(res, 400, { error: 'Name must be 2–30 letters, numbers, spaces, . _ -' });
-    if (!password || String(password).length < 4) return send(res, 400, { error: 'Password must be at least 4 characters' });
-    if (db.prepare('SELECT COUNT(*) AS n FROM users').get().n >= MAX_MEMBERS) return send(res, 403, { error: `The trip is full (${MAX_MEMBERS} members)` });
-    if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(name)) return send(res, 409, { error: 'That name is taken' });
+  // ----- account routes -----
+  function me({ user }) {
+    return ok({ user, maxVotes: MAX_VOTES, maxMembers: MAX_MEMBERS, minPassword: MIN_PASSWORD, inviteRequired: !!inviteCode });
+  }
+
+  async function register({ req, body, ip }) {
+    const v = rules.validateRegistration({ username: body.username, password: body.password, minPassword: MIN_PASSWORD });
+    if (v.error) return refuse(v);
+    if (inviteCode) {
+      const key = `invite:${ip}`;
+      const wait = limiter.retryAfter(key);
+      if (wait) return tooMany(wait);
+      if (typeof body.code !== 'string' || !safeEqual(body.code.trim(), inviteCode)) {
+        limiter.fail(key);
+        return fail(403, 'Wrong invite code');
+      }
+    }
     const salt = crypto.randomBytes(16).toString('hex');
-    const { lastInsertRowid } = db.prepare('INSERT INTO users (username, salt, hash) VALUES (?,?,?)').run(name, salt, hashPw(String(password), salt));
-    return startSession(res, { id: Number(lastInsertRowid), username: name });
+    const hash = await hashPassword(body.password, salt);
+    const result = store.tx(() => {
+      const d = rules.decideJoin({
+        memberCount: store.countUsers(), maxMembers: MAX_MEMBERS, nameTaken: !!store.userByName(v.username),
+      });
+      return d.error ? d : { id: store.createUser(v.username, salt, hash) };
+    });
+    if (result.error) return refuse(result);
+    return startSession(req, { id: result.id, username: v.username });
   }
 
-  if (route === 'POST /api/login') {
-    const { username, password } = await readBody(req);
-    const u = db.prepare('SELECT * FROM users WHERE username = ?').get(clean(username, 30));
-    if (!u || !crypto.timingSafeEqual(Buffer.from(u.hash, 'hex'), Buffer.from(hashPw(String(password || ''), u.salt), 'hex')))
-      return send(res, 401, { error: 'Wrong name or password' });
-    return startSession(res, u);
+  async function login({ req, body, ip }) {
+    const name = typeof body.username === 'string' ? body.username.trim() : '';
+    const password = typeof body.password === 'string' ? body.password : '';
+    const keys = [`ip:${ip}`, `user:${name.toLowerCase()}`];
+    const wait = Math.max(...keys.map((k) => limiter.retryAfter(k)));
+    if (wait) return tooMany(wait);
+    const user = name && name.length <= 30 ? store.userByName(name) : null;
+    if (!(await verifyPassword(password, user))) {
+      keys.forEach((k) => limiter.fail(k));
+      return fail(401, 'Wrong name or password');
+    }
+    limiter.reset(keys[1]);
+    return startSession(req, user);
   }
 
-  if (route === 'POST /api/logout') {
-    const m = /(?:^|;\s*)sid=([a-f0-9]+)/.exec(req.headers.cookie || '');
-    if (m) db.prepare('DELETE FROM sessions WHERE token = ?').run(m[1]);
-    return send(res, 200, { ok: true }, { 'Set-Cookie': 'sid=; HttpOnly; Path=/; Max-Age=0' });
+  function logout({ req }) {
+    const sid = readSid(req);
+    if (sid) store.deleteSession(hashToken(sid));
+    return ok({ ok: true }, clearCookie(req));
   }
 
-  const user = currentUser(req);
-  if (route === 'GET /api/me') return send(res, 200, { user, maxVotes: MAX_VOTES, maxMembers: MAX_MEMBERS });
-  if (!user) return send(res, 401, { error: 'Please log in' });
-
-  if (route === 'GET /api/state') {
-    const members = db.prepare(`
-      SELECT u.id, u.username, i.title AS leads,
-        (SELECT COUNT(*) FROM votes v WHERE v.user_id = u.id) AS votes_used
-      FROM users u LEFT JOIN itineraries i ON i.lead_id = u.id ORDER BY u.id`).all();
-    return send(res, 200, { itineraries: listItineraries(user.id), members });
+  function logoutAll({ req, user }) {
+    store.deleteUserSessions(user.id);
+    return ok({ ok: true }, clearCookie(req));
   }
 
-  if (route === 'POST /api/itineraries') {
-    const b = await readBody(req);
-    const title = clean(b.title, 120);
-    if (!title) return send(res, 400, { error: 'Title is required' });
-    const image = clean(b.image, 500);
-    if (image && !/^https:\/\/\S+$/.test(image)) return send(res, 400, { error: 'Photo link must start with https://' });
-    db.prepare('INSERT INTO itineraries (title, category, area, duration, cost, description, image, created_by) VALUES (?,?,?,?,?,?,?,?)')
-      .run(title, clean(b.category, 40), clean(b.area, 80), clean(b.duration, 60), clean(b.cost, 60), clean(b.description, 1000), image || null, user.id);
-    return send(res, 201, { ok: true });
+  // ----- poll routes -----
+  function state({ user }) {
+    const itineraries = store.listItineraries(user.id).map((it) => ({
+      ...it,
+      can_delete: rules.canDelete(it, user.id, it.other_votes),
+      image_link: rules.imageLink(it.image),
+    }));
+    return ok({ itineraries, members: store.members() });
   }
 
-  const m = /^\/api\/itineraries\/(\d+)\/(vote|claim|release|details|delete)$/.exec(url.pathname);
-  if (m && req.method === 'POST') {
-    const id = Number(m[1]);
-    const it = db.prepare('SELECT * FROM itineraries WHERE id = ?').get(id);
-    if (!it) return send(res, 404, { error: 'Itinerary not found' });
+  function propose({ body, user }) {
+    const title = rules.clean(body.title, 120);
+    if (!title) return fail(400, 'Title is required');
+    const img = rules.normalizeImage(body.image);
+    if (img.error) return refuse(img);
+    const id = store.createItinerary({
+      title,
+      category: rules.clean(body.category, 40),
+      area: rules.clean(body.area, 80),
+      duration: rules.clean(body.duration, 60),
+      cost: rules.clean(body.cost, 60),
+      description: rules.clean(body.description, 1000),
+      image: img.image,
+      imageUrl: img.imageUrl,
+      createdBy: user.id,
+    });
+    if (rules.wikiTitle(img.image)) images.enqueue(id);
+    return reply(201, { ok: true, id });
+  }
 
-    switch (m[2]) {
-      case 'vote': {
-        const has = db.prepare('SELECT 1 FROM votes WHERE user_id = ? AND itinerary_id = ?').get(user.id, id);
-        if (has) {
-          db.prepare('DELETE FROM votes WHERE user_id = ? AND itinerary_id = ?').run(user.id, id);
-        } else {
-          const used = db.prepare('SELECT COUNT(*) AS n FROM votes WHERE user_id = ?').get(user.id).n;
-          if (used >= MAX_VOTES) return send(res, 400, { error: `You've used all ${MAX_VOTES} votes. Remove one first.` });
-          db.prepare('INSERT INTO votes (user_id, itinerary_id) VALUES (?, ?)').run(user.id, id);
-        }
-        return send(res, 200, { ok: true });
-      }
-      case 'claim': {
-        if (it.lead_id) return send(res, 409, { error: 'Someone already leads this one' });
-        const mine = db.prepare('SELECT title FROM itineraries WHERE lead_id = ?').get(user.id);
-        if (mine) return send(res, 409, { error: `You already lead "${mine.title}". Release it first.` });
-        db.prepare('UPDATE itineraries SET lead_id = ? WHERE id = ?').run(user.id, id);
-        return send(res, 200, { ok: true });
-      }
-      case 'release': {
-        if (it.lead_id !== user.id) return send(res, 403, { error: 'You are not the lead' });
-        db.prepare('UPDATE itineraries SET lead_id = NULL WHERE id = ?').run(id);
-        return send(res, 200, { ok: true });
-      }
-      case 'details': {
-        if (it.lead_id !== user.id) return send(res, 403, { error: 'Only the lead can edit plan details' });
-        const b = await readBody(req);
-        db.prepare('UPDATE itineraries SET day = ?, notes = ? WHERE id = ?').run(clean(b.day, 60), clean(b.notes, 2000), id);
-        return send(res, 200, { ok: true });
-      }
-      case 'delete': {
-        if (it.created_by !== user.id) return send(res, 403, { error: 'Only whoever proposed it can delete it' });
-        db.prepare('DELETE FROM itineraries WHERE id = ?').run(id);
-        return send(res, 200, { ok: true });
-      }
+  // Each action runs inside one transaction: read, decide, write.
+  const ACTIONS = {
+    vote(it, userId) {
+      const d = rules.decideVote({ hasVote: store.hasVote(userId, it.id), used: store.votesUsed(userId), max: MAX_VOTES });
+      if (d.ok) (d.action === 'add' ? store.addVote : store.removeVote)(userId, it.id);
+      return d;
+    },
+    claim(it, userId) {
+      const d = rules.decideClaim({ itinerary: it, userId, currentLead: store.leadOf(userId) });
+      if (d.ok) store.setLead(it.id, userId);
+      return d;
+    },
+    release(it, userId) {
+      const d = rules.decideRelease({ itinerary: it, userId });
+      if (d.ok) store.setLead(it.id, null);
+      return d;
+    },
+    details(it, userId, body) {
+      const d = rules.decideDetails({ itinerary: it, userId });
+      if (d.ok) store.setDetails(it.id, rules.clean(body.day, 60), rules.clean(body.notes, 2000));
+      return d;
+    },
+    delete(it, userId) {
+      const d = rules.decideDelete({ itinerary: it, userId, otherVotes: store.otherVotes(it.id, it.created_by) });
+      if (d.ok) store.deleteItinerary(it.id);
+      return d;
+    },
+  };
+
+  function itemAction({ user, body }, id, action) {
+    const d = store.tx(() => {
+      const it = store.getItinerary(id);
+      return it ? ACTIONS[action](it, user.id, body) : { status: 404, error: 'Itinerary not found' };
+    });
+    return d.error ? refuse(d) : ok();
+  }
+
+  // ----- router -----
+  const auth = (handler) => (ctx) => (ctx.user ? handler(ctx) : fail(401, 'Please log in'));
+  const ROUTES = {
+    'GET /api/me': me,
+    'POST /api/register': register,
+    'POST /api/login': login,
+    'POST /api/logout': logout,
+    'POST /api/logout-all': auth(logoutAll),
+    'GET /api/state': auth(state),
+    'POST /api/itineraries': auth(propose),
+  };
+
+  async function api(req, url) {
+    const ctx = { req, ip: req.socket.remoteAddress || '', body: {}, user: null };
+    if (req.method === 'POST') {
+      const bad = checkOrigin(req) || checkContentType(req);
+      if (bad) { req.resume(); return fail(bad.status, bad.error); }
+      ctx.body = await readBody(req, BODY_LIMIT);
+    }
+    ctx.user = currentUser(req);
+    const route = ROUTES[`${req.method} ${url.pathname}`];
+    if (route) return route(ctx);
+    const m = ITEM_ROUTE.exec(url.pathname);
+    if (m && req.method === 'POST') return auth((c) => itemAction(c, Number(m[1]), m[2]))(ctx);
+    return fail(404, 'Not found');
+  }
+
+  async function handle(req, res) {
+    try {
+      const url = new URL(req.url, 'http://localhost');
+      if (url.pathname.startsWith('/api/')) return send(res, await api(req, url));
+      return await serveStatic(req, res, url);
+    } catch (err) {
+      const known = err instanceof HttpError;
+      if (!known) log.error(err);
+      if (res.headersSent) return res.destroy();
+      send(res, known ? fail(err.status, err.message, err.headers) : fail(500, 'Server error'));
     }
   }
 
-  return send(res, 404, { error: 'Not found' });
+  const server = http.createServer(handle);
+
+  // #6: drop expired sessions (and stale rate-limit entries) at startup and hourly
+  const prune = () => {
+    try { store.pruneSessions(Date.now()); limiter.prune(); } catch (e) { log.error(e); }
+  };
+  prune();
+  const timer = setInterval(prune, PRUNE_EVERY_MS);
+  timer.unref();
+  server.on('close', () => clearInterval(timer));
+  // #7: look up missing Wikipedia thumbnails in the background once we're up
+  server.on('listening', () => { images.resolvePending(); });
+
+  server.locals = { store, images, limiter };
+  return server;
 }
 
-// ---------- server ----------
-const PUBLIC = path.join(__dirname, 'public');
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
+module.exports = { createApp, MAX_MEMBERS, MAX_VOTES, MIN_PASSWORD };
 
-http.createServer(async (req, res) => {
-  const url = new URL(req.url, 'http://localhost');
-  try {
-    if (url.pathname.startsWith('/api/')) return await api(req, res, url);
-    const file = path.normalize(path.join(PUBLIC, url.pathname === '/' ? 'index.html' : url.pathname));
-    if (!file.startsWith(PUBLIC) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
-      res.writeHead(404); return res.end('Not found');
-    }
-    res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
-    fs.createReadStream(file).pipe(res);
-  } catch (err) {
-    console.error(err);
-    send(res, 500, { error: 'Server error' });
+if (require.main === module) {
+  const PORT = Number(process.env.PORT) || 3000;
+  const HOST = process.env.HOST || '127.0.0.1';
+  const store = openDb(process.env.TRIP_DB || path.join(__dirname, 'trip.db'));
+  if (!process.env.TRIP_CODE) {
+    console.warn('Warning: TRIP_CODE is not set, so anyone who can reach this server can register.');
   }
-}).listen(PORT, () => console.log(`Bangkok trip planner running at http://localhost:${PORT}`));
+  createApp({ db: store }).listen(PORT, HOST, () => {
+    console.log(`Bangkok trip planner running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+  });
+}
